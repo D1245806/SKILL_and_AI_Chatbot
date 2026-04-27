@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gemini AI 聊天機器人</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{
+    --bg:#0d1117;--sidebar:#161b22;--card:#21262d;--border:#30363d;
+    --accent:#58a6ff;--accent2:#1f6feb;--text:#e6edf3;--muted:#8b949e;
+    --user-bubble:#1f6feb;--ai-bubble:#21262d;--danger:#f85149;
+    --success:#3fb950;--radius:12px;
+  }
+  body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden}
+
+  /* ── Sidebar ── */
+  #sidebar{width:260px;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+  #sidebar-header{padding:16px;border-bottom:1px solid var(--border)}
+  #sidebar-header h1{font-size:15px;font-weight:600;color:var(--accent);display:flex;align-items:center;gap:8px}
+  #new-chat-btn{width:100%;margin-top:10px;padding:9px;background:var(--accent2);color:#fff;border:none;border-radius:var(--radius);cursor:pointer;font-size:13px;font-weight:500;transition:.2s}
+  #new-chat-btn:hover{background:var(--accent);transform:translateY(-1px)}
+  #session-list{flex:1;overflow-y:auto;padding:8px}
+  .session-item{padding:10px 12px;border-radius:8px;cursor:pointer;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;transition:.15s;font-size:13px}
+  .session-item:hover{background:var(--card)}
+  .session-item.active{background:var(--card);border-left:3px solid var(--accent)}
+  .session-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .session-delete{color:var(--muted);font-size:16px;opacity:0;transition:.15s;background:none;border:none;cursor:pointer;padding:2px 6px}
+  .session-item:hover .session-delete{opacity:1}
+  .session-delete:hover{color:var(--danger)}
+
+  /* ── Preferences Panel ── */
+  #prefs-panel{padding:12px;border-top:1px solid var(--border)}
+  #prefs-panel summary{cursor:pointer;font-size:12px;color:var(--muted);user-select:none}
+  #prefs-form{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+  #prefs-form label{font-size:11px;color:var(--muted)}
+  #prefs-form input,#prefs-form select{width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px}
+  #prefs-form button{padding:6px;background:var(--accent2);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px}
+
+  /* ── Main Chat Area ── */
+  #main{flex:1;display:flex;flex-direction:column;min-width:0}
+  #chat-header{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+  #chat-title{font-size:15px;font-weight:500}
+  #chat-actions{display:flex;gap:8px}
+  #regen-btn{padding:6px 14px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:8px;cursor:pointer;font-size:12px;transition:.2s}
+  #regen-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+  /* ── Messages ── */
+  #messages{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px}
+  #messages::-webkit-scrollbar{width:4px}
+  #messages::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+  .msg-row{display:flex;gap:10px;animation:fadeIn .3s ease}
+  .msg-row.user{flex-direction:row-reverse}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  .avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+  .avatar.user{background:var(--user-bubble)}
+  .avatar.ai{background:linear-gradient(135deg,#6e40c9,#1f6feb)}
+  .bubble{max-width:70%;padding:12px 16px;border-radius:var(--radius);line-height:1.6;font-size:14px;white-space:pre-wrap;word-break:break-word}
+  .bubble.user{background:var(--user-bubble);border-radius:var(--radius) 4px var(--radius) var(--radius)}
+  .bubble.ai{background:var(--ai-bubble);border:1px solid var(--border);border-radius:4px var(--radius) var(--radius) var(--radius)}
+  .msg-time{font-size:10px;color:var(--muted);margin-top:4px;text-align:right}
+  .msg-row.user .msg-time{text-align:left}
+  .typing-dots{display:flex;gap:4px;padding:4px 0}
+  .typing-dots span{width:6px;height:6px;background:var(--muted);border-radius:50%;animation:dot .9s infinite}
+  .typing-dots span:nth-child(2){animation-delay:.2s}
+  .typing-dots span:nth-child(3){animation-delay:.4s}
+  @keyframes dot{0%,80%,100%{transform:scale(0.6);opacity:.4}40%{transform:scale(1);opacity:1}}
+  #empty-state{text-align:center;margin:auto;color:var(--muted)}
+  #empty-state .icon{font-size:48px;margin-bottom:12px}
+  #empty-state p{font-size:14px}
+
+  /* ── Input Area ── */
+  #input-area{padding:16px 20px;border-top:1px solid var(--border);background:var(--sidebar)}
+  #attach-preview{margin-bottom:8px;display:none;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+  #attach-preview span{background:var(--card);padding:4px 10px;border-radius:20px;border:1px solid var(--border)}
+  #attach-preview button{background:none;border:none;color:var(--danger);cursor:pointer;font-size:16px}
+  #input-row{display:flex;gap:10px;align-items:flex-end}
+  #upload-btn{background:var(--card);border:1px solid var(--border);color:var(--muted);border-radius:10px;padding:10px 12px;cursor:pointer;font-size:18px;transition:.2s;flex-shrink:0}
+  #upload-btn:hover{border-color:var(--accent);color:var(--accent)}
+  #file-input{display:none}
+  #msg-input{flex:1;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:10px 14px;font-size:14px;resize:none;max-height:120px;font-family:inherit;transition:.2s;outline:none}
+  #msg-input:focus{border-color:var(--accent)}
+  #send-btn{background:var(--accent2);color:#fff;border:none;border-radius:10px;padding:10px 18px;cursor:pointer;font-size:18px;transition:.2s;flex-shrink:0}
+  #send-btn:hover:not(:disabled){background:var(--accent);transform:translateY(-1px)}
+  #send-btn:disabled{opacity:.5;cursor:not-allowed}
+</style>
+</head>
+<body>
+
+<!-- ══ Sidebar ══ -->
+<aside id="sidebar">
+  <div id="sidebar-header">
+    <h1>🤖 Gemini Chat</h1>
+    <button id="new-chat-btn" onclick="newSession()">＋ 新對話</button>
+  </div>
+  <div id="session-list"></div>
+  <details id="prefs-panel">
+    <summary>⚙️ 偏好設定</summary>
+    <div id="prefs-form">
+      <label>暱稱</label>
+      <input id="pref-username" type="text" placeholder="使用者">
+      <label>回應風格</label>
+      <select id="pref-style">
+        <option value="friendly">親切友善</option>
+        <option value="formal">正式專業</option>
+        <option value="concise">簡潔扼要</option>
+      </select>
+      <button onclick="savePrefs()">儲存</button>
+    </div>
+  </details>
+</aside>
+
+<!-- ══ Main ══ -->
+<main id="main">
+  <header id="chat-header">
+    <span id="chat-title">請選擇或建立對話</span>
+    <div id="chat-actions">
+      <button id="regen-btn" onclick="regenerate()" style="display:none">🔄 重新生成</button>
+    </div>
+  </header>
+
+  <div id="messages">
+    <div id="empty-state">
+      <div class="icon">💬</div>
+      <p>點擊「＋ 新對話」開始聊天</p>
+    </div>
+  </div>
+
+  <div id="input-area">
+    <div id="attach-preview">
+      <span id="attach-name"></span>
+      <button onclick="clearAttach()">✕</button>
+    </div>
+    <div id="input-row">
+      <button id="upload-btn" onclick="document.getElementById('file-input').click()" title="上傳圖片或文件">📎</button>
+      <input id="file-input" type="file" accept="image/*,.pdf,.txt" onchange="handleFileSelect(this)">
+      <textarea id="msg-input" rows="1" placeholder="輸入訊息… (Enter 傳送，Shift+Enter 換行)"
+        oninput="autoResize(this)" onkeydown="handleKey(event)"></textarea>
+      <button id="send-btn" onclick="sendMessage()" title="傳送">➤</button>
+    </div>
+  </div>
+</main>
+
+<script>
+let currentSessionId = null;
+let attachedFilePath = null;
+let isSending = false;
+
+/* ── Session 管理 ── */
+async function loadSessions() {
+  const res = await fetch('/sessions');
+  const sessions = await res.json();
+  const list = document.getElementById('session-list');
+  list.innerHTML = '';
+  sessions.forEach(s => {
+    const item = document.createElement('div');
+    item.className = 'session-item' + (s.id === currentSessionId ? ' active' : '');
+    item.id = 'session-' + s.id;
+    item.innerHTML = `<span class="session-title" onclick="selectSession('${s.id}')">${s.title}</span>
+      <button class="session-delete" onclick="deleteSession('${s.id}')">🗑</button>`;
+    list.appendChild(item);
+  });
+}
+
+async function newSession() {
+  const res = await fetch('/sessions', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({title:'新對話'}) });
+  const session = await res.json();
+  currentSessionId = session.id;
+  await loadSessions();
+  await loadMessages(session.id);
+  document.getElementById('chat-title').textContent = session.title;
+  document.getElementById('regen-btn').style.display = 'none';
+  document.getElementById('msg-input').focus();
+}
+
+async function selectSession(id) {
+  currentSessionId = id;
+  await loadSessions();
+  await loadMessages(id);
+  document.getElementById('regen-btn').style.display = 'flex';
+}
+
+async function deleteSession(id) {
+  if (!confirm('確定要刪除這個對話嗎？')) return;
+  await fetch('/sessions/' + id, { method: 'DELETE' });
+  if (currentSessionId === id) {
+    currentSessionId = null;
+    document.getElementById('messages').innerHTML = '<div id="empty-state"><div class="icon">💬</div><p>點擊「＋ 新對話」開始聊天</p></div>';
+    document.getElementById('chat-title').textContent = '請選擇或建立對話';
+    document.getElementById('regen-btn').style.display = 'none';
+  }
+  await loadSessions();
+}
+
+/* ── 訊息管理 ── */
+async function loadMessages(sessionId) {
+  const res = await fetch('/sessions/' + sessionId + '/messages');
+  const messages = await res.json();
+  const container = document.getElementById('messages');
+  container.innerHTML = '';
+  if (messages.length === 0) {
+    container.innerHTML = '<div style="text-align:center;color:var(--muted);margin:auto;font-size:14px">✨ 開始你的第一句話吧！</div>';
+    return;
+  }
+  messages.forEach(m => appendMessage(m.role, m.content, m.timestamp));
+  scrollToBottom();
+
+  // 更新標題
+  const sessions = await (await fetch('/sessions')).json();
+  const s = sessions.find(x => x.id === sessionId);
+  if (s) document.getElementById('chat-title').textContent = s.title;
+}
+
+function appendMessage(role, content, timestamp) {
+  const container = document.getElementById('messages');
+  const emptyState = document.getElementById('empty-state');
+  if (emptyState) emptyState.remove();
+
+  const row = document.createElement('div');
+  row.className = 'msg-row ' + role;
+
+  const time = timestamp ? new Date(timestamp).toLocaleTimeString('zh-TW', {hour:'2-digit',minute:'2-digit'}) : '';
+  const avatarEmoji = role === 'user' ? '👤' : '🤖';
+
+  row.innerHTML = `
+    <div class="avatar ${role}">${avatarEmoji}</div>
+    <div>
+      <div class="bubble ${role}">${escapeHtml(content)}</div>
+      <div class="msg-time">${time}</div>
+    </div>`;
+  container.appendChild(row);
+  scrollToBottom();
+  return row;
+}
+
+function showTyping() {
+  const container = document.getElementById('messages');
+  const row = document.createElement('div');
+  row.className = 'msg-row ai';
+  row.id = 'typing-indicator';
+  row.innerHTML = '<div class="avatar ai">🤖</div><div class="bubble ai"><div class="typing-dots"><span></span><span></span><span></span></div></div>';
+  container.appendChild(row);
+  scrollToBottom();
+}
+
+function removeTyping() {
+  const el = document.getElementById('typing-indicator');
+  if (el) el.remove();
+}
+
+async function sendMessage() {
+  if (!currentSessionId) { alert('請先建立或選擇一個對話！'); return; }
+  const input = document.getElementById('msg-input');
+  const content = input.value.trim();
+  if (!content || isSending) return;
+
+  isSending = true;
+  document.getElementById('send-btn').disabled = true;
+  input.value = '';
+  input.style.height = 'auto';
+
+  const body = { content };
+  if (attachedFilePath) { body.attachment_path = attachedFilePath; clearAttach(); }
+
+  appendMessage('user', content, new Date().toISOString());
+  showTyping();
+
+  try {
+    const res = await fetch('/sessions/' + currentSessionId + '/messages', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    removeTyping();
+    if (res.ok) {
+      appendMessage('assistant', data.ai_message.content, data.ai_message.timestamp);
+      document.getElementById('regen-btn').style.display = 'flex';
+      await loadSessions(); // 更新側欄標題
+    } else {
+      appendMessage('assistant', '❌ 錯誤：' + (data.detail || '未知錯誤'), new Date().toISOString());
+    }
+  } catch (e) {
+    removeTyping();
+    appendMessage('assistant', '❌ 連線失敗，請確認伺服器是否正常運作。', new Date().toISOString());
+  }
+
+  isSending = false;
+  document.getElementById('send-btn').disabled = false;
+  input.focus();
+}
+
+/* ── Regenerate ── */
+async function regenerate() {
+  if (!currentSessionId || isSending) return;
+  isSending = true;
+  document.getElementById('send-btn').disabled = true;
+
+  // 移除最後一個 AI 訊息的 DOM
+  const aiRows = document.querySelectorAll('.msg-row.assistant');
+  if (aiRows.length > 0) aiRows[aiRows.length - 1].remove();
+  showTyping();
+
+  try {
+    const res = await fetch('/sessions/' + currentSessionId + '/regenerate', { method: 'POST' });
+    const data = await res.json();
+    removeTyping();
+    if (res.ok) {
+      appendMessage('assistant', data.content, data.timestamp);
+    } else {
+      appendMessage('assistant', '❌ ' + (data.detail || '重新生成失敗'), new Date().toISOString());
+    }
+  } catch (e) {
+    removeTyping();
+    appendMessage('assistant', '❌ 重新生成失敗。', new Date().toISOString());
+  }
+
+  isSending = false;
+  document.getElementById('send-btn').disabled = false;
+}
+
+/* ── 檔案上傳 ── */
+async function handleFileSelect(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const res = await fetch('/upload', { method: 'POST', body: formData });
+    const data = await res.json();
+    attachedFilePath = data.path;
+    document.getElementById('attach-name').textContent = '📎 ' + file.name;
+    document.getElementById('attach-preview').style.display = 'flex';
+  } catch (e) {
+    alert('上傳失敗：' + e.message);
+  }
+  input.value = '';
+}
+
+function clearAttach() {
+  attachedFilePath = null;
+  document.getElementById('attach-preview').style.display = 'none';
+  document.getElementById('attach-name').textContent = '';
+}
+
+/* ── 偏好設定 ── */
+async function loadPrefs() {
+  const res = await fetch('/preferences');
+  const prefs = await res.json();
+  document.getElementById('pref-username').value = prefs.username || '';
+  document.getElementById('pref-style').value = prefs.response_style || 'friendly';
+}
+
+async function savePrefs() {
+  const body = {
+    username: document.getElementById('pref-username').value,
+    response_style: document.getElementById('pref-style').value,
+  };
+  await fetch('/preferences', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  alert('✅ 偏好設定已儲存！');
+}
+
+/* ── 工具函式 ── */
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function scrollToBottom() {
+  const c = document.getElementById('messages');
+  c.scrollTop = c.scrollHeight;
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+
+/* ── 初始化 ── */
+window.onload = async () => {
+  await loadSessions();
+  await loadPrefs();
+};
+</script>
+</body>
+</html>
