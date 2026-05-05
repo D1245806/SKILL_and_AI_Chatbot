@@ -1,13 +1,14 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+*.pyc
 *.py[cod]
 *$py.class
 
-# Environments
+# Environments（金鑰檔案，絕對不能 commit）
 .env
-.venv
-env/
+.venv/
 venv/
+env/
 ENV/
 env.bak/
 venv.bak/
@@ -15,6 +16,8 @@ venv.bak/
 # SQLite databases
 *.db
 *.sqlite3
+chat.db
+users.db
 
 # Uploads
 uploads/
