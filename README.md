@@ -18,7 +18,7 @@
 
 ### 1. Skill 設計（`.agents/skills/`）
 
-為以下五個開發階段＋提交方式各設計一個 SKILL.md：
+為以下開發階段＋提交方式各設計一個 SKILL.md：
 
 | 資料夾名稱        | 對應指令          | 說明                                                                           |
 | ----------------- | ----------------- | ------------------------------------------------------------------------------ |
@@ -28,6 +28,7 @@
 | `implement/`    | `/implement`    | 產出程式碼（**需指定**：HTML 前端 + FastAPI + SQLite 後端）              |
 | `test/`         | `/test`         | 產出手動測試清單                                                               |
 | `commit/`       | `/commit`       | 自動 commit + push（**需指定**：使用者與 email 使用 Antigravity 預設值） |
+| `linebot-dev/`  | `/linebot-dev`  | 擴充為股票 LINE Bot（FastAPI Webhook + Gemini + SQLite 互動紀錄）          |
 
 ### 2. 開發文件（`docs/`）
 
@@ -75,7 +76,8 @@ your-repo/
 │       ├── models/SKILL.md
 │       ├── implement/SKILL.md
 │       ├── test/SKILL.md
-│       └── commit/SKILL.md
+│       ├── commit/SKILL.md
+│       └── linebot-dev/SKILL.md   ← 股票 LINE Bot 擴充 Skill
 ├── docs/
 │   ├── PRD.md
 │   ├── ARCHITECTURE.md
@@ -112,6 +114,38 @@ cp .env.example .env
 uvicorn app:app --reload
 # 開啟瀏覽器：http://localhost:8000
 ```
+
+---
+
+## LINE Bot 擴充啟動方式
+
+> 參考 `.agents/skills/linebot-dev/SKILL.md` 完整說明。
+
+```bash
+# 1. 安裝 LINE Bot 相依套件
+pip install line-bot-sdk>=3.0.0
+
+# 2. 設定環境變數（.env 需包含以下三個）
+# LINE_CHANNEL_ACCESS_TOKEN=...
+# LINE_CHANNEL_SECRET=...
+# GEMINI_API_KEY=...
+
+# 3. 啟動伺服器（Webhook 路由為 POST /callback）
+uvicorn app:app --reload --port 8000
+
+# 4. 使用 ngrok 建立公開 HTTPS URL
+ngrok http 8000
+# 將產生的 URL（如 https://xxxx.ngrok.io/callback）填入 LINE 後台 Webhook URL
+```
+
+### LINE 後台必要設定
+
+1. 登入 [LINE Developers Console](https://developers.line.biz/)
+2. 進入 Messaging API Channel
+3. **Webhook URL** 填入：`https://<ngrok-domain>/callback`
+4. 啟用 **Use webhook**
+5. 關閉 **Auto-reply messages**
+6. 點擊 **Verify** 確認連線成功
 
 ---
 

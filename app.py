@@ -1,6 +1,6 @@
 """
-AI 聊天機器人後端
-技術棧：FastAPI + SQLite + Google Gemini API
+AI 聊天機器人後端（含股票 LINE Bot 擴充）
+技術棧：FastAPI + SQLite + Google Gemini API + LINE Bot SDK v3
 """
 
 import os
@@ -14,21 +14,39 @@ from typing import Optional
 import httpx
 from google import genai
 from google.genai import types
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
+# ── LINE Bot SDK v3 import（必須使用 v3，不可用 v2 舊寫法）──────
+from linebot.v3.messaging import (
+    Configuration,
+    ApiClient,
+    MessagingApi,
+    ReplyMessageRequest,
+    TextMessage,
+)
+from linebot.v3.webhook import WebhookHandler
+from linebot.v3.webhooks import MessageEvent, TextMessageContent
+from linebot.v3.exceptions import InvalidSignatureError
+
 # ── 載入環境變數 ─────────────────────────────────────────────
 load_dotenv()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_API_KEY            = os.getenv("GEMINI_API_KEY", "")
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+LINE_CHANNEL_SECRET       = os.getenv("LINE_CHANNEL_SECRET", "")
 
 # ── 設定 Gemini API (新版 google-genai SDK) ───────────────────
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
+# ── LINE Bot v3 設定 ──────────────────────────────────────────
+line_configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
+handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
 # ── FastAPI 應用程式 ──────────────────────────────────────────
-app = FastAPI(title="AI 聊天機器人", version="1.0.0")
+app = FastAPI(title="AI 聊天機器人 + 股票 LINE Bot", version="2.0.0")
 
 # ── 資料庫路徑 ──────────────────────────────────────────────
 DB_PATH = Path(__file__).parent / "chat.db"
@@ -83,6 +101,17 @@ def init_db():
             key TEXT UNIQUE NOT NULL,
             value TEXT NOT NULL,
             updated_at TEXT NOT NULL
+        )
+    """)
+
+    # 建立 line_interactions 資料表（LINE Bot 互動紀錄，本週新增）
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS line_interactions (
+            id           INTEGER  PRIMARY KEY AUTOINCREMENT,
+            user_id      TEXT     NOT NULL,
+            user_message TEXT     NOT NULL,
+            bot_reply    TEXT     NOT NULL,
+            created_at   TEXT     NOT NULL
         )
     """)
 
@@ -601,6 +630,128 @@ async def update_preferences(req: UpdatePreferencesRequest):
 
 
 # ════════════════════════════════════════════════════════════
+# LINE Bot：輔助函式
+# ════════════════════════════════════════════════════════════
+
+def generate_stock_reply(user_text: str) -> str:
+    """
+    使用 Gemini 產生股票相關回覆。
+    - 聚焦股票分析、投資趨勢、產業資訊
+    - 若與股票無關，引導使用者輸入股票問題
+    - 若 Gemini 發生錯誤，回傳友善錯誤訊息
+    """
+    stock_keywords = [
+        "股票", "股價", "台積電", "大盤", "上市", "上櫃",
+        "漲", "跌", "K線", "技術分析", "基本面", "ETF",
+        "投資", "美股", "台股", "選股", "產業", "半導體",
+        "AI", "晶片", "財報", "EPS", "本益比", "殖利率",
+    ]
+    is_stock_related = any(kw in user_text for kw in stock_keywords)
+
+    if not is_stock_related:
+        return (
+            "我是股票分析助理，專門回答股票和投資相關問題 📈\n"
+            "請輸入想分析的股票名稱或代號，例如：\n"
+            "・請分析台積電\n"
+            "・台灣50 ETF 最近走勢\n"
+            "・半導體產業趨勢分析"
+        )
+
+    prompt = (
+        "你是一個專業的股票資訊分析助理，請用繁體中文回覆。\n"
+        "回覆風格：清楚、條列式、適合投資新手閱讀。\n"
+        "\n"
+        f"使用者問題：{user_text}\n"
+        "\n"
+        "請提供股票相關分析，可包含走勢說明、產業背景、注意事項等。\n"
+        "⚠️ 最後必須附上：「本回覆僅供學習參考，不構成投資建議，請自行判斷風險。」"
+    )
+
+    try:
+        response = gemini_client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=[types.Content(role="user", parts=[types.Part(text=prompt)])]
+        )
+        return response.text
+    except Exception as e:
+        return (
+            f"抱歉，目前 AI 分析服務暫時無法使用 😅\n"
+            f"請稍後再試，或換個方式提問！\n"
+            f"（錯誤：{type(e).__name__}）"
+        )
+
+
+def save_line_interaction(user_id: str, user_message: str, bot_reply: str) -> None:
+    """將 LINE 互動紀錄寫入 SQLite 的 line_interactions 資料表"""
+    conn = get_db()
+    conn.execute(
+        """
+        INSERT INTO line_interactions (user_id, user_message, bot_reply, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (user_id, user_message, bot_reply, now())
+    )
+    conn.commit()
+    conn.close()
+
+
+# ════════════════════════════════════════════════════════════
+# LINE Bot：Webhook 路由（POST /callback）
+# ════════════════════════════════════════════════════════════
+
+@app.post("/callback")
+async def line_callback(request: Request):
+    """
+    LINE Webhook 端點。
+    1. 讀取 X-Line-Signature Header
+    2. 用 LINE_CHANNEL_SECRET 驗證簽名
+    3. 驗證失敗 → 400 Bad Request
+    4. 驗證成功 → 交給 handler 分派 Event
+    5. 成功回傳 HTTP 200 OK
+    """
+    signature = request.headers.get("X-Line-Signature", "")
+    body_bytes = await request.body()
+    body_text  = body_bytes.decode("utf-8")
+
+    try:
+        handler.handle(body_text, signature)
+    except InvalidSignatureError:
+        raise HTTPException(status_code=400, detail="Invalid LINE signature")
+
+    return PlainTextResponse("OK", status_code=200)
+
+
+@handler.add(MessageEvent, message=TextMessageContent)
+def handle_line_message(event: MessageEvent) -> None:
+    """
+    處理 LINE 文字訊息 Event。
+    - 取得 user_id 與使用者訊息
+    - 呼叫 Gemini 產生股票分析回覆
+    - 儲存互動紀錄到 SQLite
+    - 用 replyToken 回覆使用者（replyToken 只能使用一次）
+    """
+    user_id      = event.source.user_id
+    user_message = event.message.text
+    reply_token  = event.reply_token
+
+    # 產生股票回覆
+    bot_reply = generate_stock_reply(user_message)
+
+    # 儲存互動紀錄
+    save_line_interaction(user_id, user_message, bot_reply)
+
+    # 回覆使用者（replyToken 只能用一次）
+    with ApiClient(line_configuration) as api_client:
+        line_bot_api = MessagingApi(api_client)
+        line_bot_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[TextMessage(text=bot_reply)]
+            )
+        )
+
+
+# ════════════════════════════════════════════════════════════
 # 應用程式啟動
 # ════════════════════════════════════════════════════════════
 
@@ -610,8 +761,10 @@ async def startup_event():
     init_db()
     # 使用 sys.stdout 避免 Windows cp950 編碼問題
     import sys
-    sys.stdout.buffer.write(b"[OK] DB initialized\n")
-    sys.stdout.buffer.write(b"[OK] Gemini API Key: " + (b"SET" if GEMINI_API_KEY else b"NOT SET - add to .env") + b"\n")
+    sys.stdout.buffer.write(b"[OK] DB initialized (sessions + messages + line_interactions)\n")
+    sys.stdout.buffer.write(b"[OK] Gemini API Key: " + (b"SET" if GEMINI_API_KEY else b"NOT SET") + b"\n")
+    sys.stdout.buffer.write(b"[OK] LINE Token:     " + (b"SET" if LINE_CHANNEL_ACCESS_TOKEN else b"NOT SET") + b"\n")
+    sys.stdout.buffer.write(b"[OK] LINE Secret:    " + (b"SET" if LINE_CHANNEL_SECRET else b"NOT SET") + b"\n")
     sys.stdout.flush()
 
 
