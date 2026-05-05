@@ -669,15 +669,19 @@ def generate_stock_reply(user_text: str) -> str:
 
     try:
         response = gemini_client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash",
             contents=[types.Content(role="user", parts=[types.Part(text=prompt)])]
         )
         return response.text
+
     except Exception as e:
+        print("Gemini error type:", type(e).__name__)
+        print("Gemini error detail:", str(e))
+
         return (
-            f"抱歉，目前 AI 分析服務暫時無法使用 😅\n"
-            f"請稍後再試，或換個方式提問！\n"
-            f"（錯誤：{type(e).__name__}）"
+            "抱歉，目前 AI 分析服務暫時無法使用 😅\n"
+            "請稍後再試，或換個方式提問！\n"
+            f"（錯誤：{type(e).__name__}，請查看終端機詳細訊息）"
         )
 
 
